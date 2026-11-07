@@ -1,0 +1,115 @@
+name: Build StemSep SILVER (Windows VST3 + ARA)
+
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  JUCE_TAG: "8.0.9"
+  ARA_TAG: "releases/2.2.0"
+  ORT_VERSION: "1.22.0"
+  DIRECTML_VERSION: "1.15.4"
+  # SCNet XL IHF (MUSDB18-HQ test SDR 10.08 dB) - Music-Source-Separation-Training (ZFTurbo), licenca MIT
+  MODEL_URL: "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/download/v1.0.15/model_scnet_ep_36_sdr_10.0891.ckpt"
+  CONFIG_URL: "https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/download/v1.0.15/config_musdb18_scnet_xl_more_wide_v5.yaml"
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------------- modelo
+      - name: Cache do modelo ONNX
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: model
+          key: scnet-xl-ihf-onnx-v1-${{ hashFiles('tools/export_scnet_onnx.py', 'tools/scnet/*.py') }}
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Exportar SCNet para ONNX
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.15.0 onnx==1.23.2 onnxscript==0.7.2 onnxruntime==1.31.1 numpy==2.5.4 pyyaml==6.0.3
+          New-Item -ItemType Directory -Force model | Out-Null
+          curl.exe -L --fail -o model/scnet.ckpt "$env:MODEL_URL"
+          curl.exe -L --fail -o model/config.yaml "$env:CONFIG_URL"
+          python tools/export_scnet_onnx.py --ckpt model/scnet.ckpt --config model/config.yaml --out model/StemSep_SCNet_XL.onnx --verify
+          Remove-Item model/scnet.ckpt
+
+      # ---------------------------------------------------------- dependencias
+      - name: Baixar JUCE e ARA SDK
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch $env:JUCE_TAG https://github.com/juce-framework/JUCE.git deps/JUCE
+          git clone --depth 1 --branch $env:ARA_TAG --recurse-submodules --shallow-submodules https://github.com/Celemony/ARA_SDK.git deps/ARA_SDK
+
+      - name: Baixar ONNX Runtime (DirectML) e DirectML
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force deps/ort, resources | Out-Null
+          curl.exe -L --fail -o deps/ort/ort.zip "https://github.com/microsoft/onnxruntime/releases/download/v$env:ORT_VERSION/Microsoft.ML.OnnxRuntime.DirectML.$env:ORT_VERSION.nupkg"
+          Expand-Archive deps/ort/ort.zip -DestinationPath deps/ort/pkg -Force
+          curl.exe -L --fail -o deps/ort/dml.zip "https://www.nuget.org/api/v2/package/Microsoft.AI.DirectML/$env:DIRECTML_VERSION"
+          Expand-Archive deps/ort/dml.zip -DestinationPath deps/ort/dml -Force
+          Copy-Item deps/ort/pkg/runtimes/win-x64/native/onnxruntime.dll resources/
+          Copy-Item deps/ort/pkg/runtimes/win-x64/native/onnxruntime_providers_shared.dll resources/
+          $dml = Get-ChildItem -Recurse deps/ort/dml -Filter DirectML.dll | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+          if (-not $dml) { throw "DirectML.dll (x64) nao encontrado no pacote" }
+          Copy-Item $dml.FullName resources/
+          Copy-Item model/StemSep_SCNet_XL.onnx resources/
+          Copy-Item deps/ort/pkg/LICENSE resources/LICENSE_onnxruntime.txt
+          Copy-Item tools/scnet/LICENSE_MSST.txt resources/LICENSE_SCNet_MSST.txt
+          Copy-Item third_party/r8brain/LICENSE resources/LICENSE_r8brain.txt
+          Get-ChildItem resources | Format-Table Name, Length
+
+      # ----------------------------------------------------------------- build
+      - name: Configurar (CMake)
+        shell: pwsh
+        run: >
+          cmake -S . -B build -A x64
+          -DJUCE_DIR="${{ github.workspace }}/deps/JUCE"
+          -DARA_SDK_PATH="${{ github.workspace }}/deps/ARA_SDK"
+          -DSTEMSEP_RESOURCES_DIR="${{ github.workspace }}/resources"
+          -DSTEMSEP_BUILD_CLI=ON
+
+      - name: Compilar
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      # ----------------------------------------------------------------- teste
+      - name: Teste de fumaca (separacao + nulidade por inversao de polaridade)
+        shell: pwsh
+        run: |
+          python -m pip install numpy==2.5.4
+          python tools/make_test_wav.py teste48k.wav
+          New-Item -ItemType Directory -Force smoke | Out-Null
+          ./build/Release/stemsep_cli.exe --runtime resources/onnxruntime.dll --model resources/StemSep_SCNet_XL.onnx --input teste48k.wav --outdir smoke --overlap 2 --device cpu
+          if ($LASTEXITCODE -ne 0) { throw "teste de nulidade falhou" }
+
+      # --------------------------------------------------------------- pacote
+      - name: Montar pacote
+        shell: pwsh
+        run: |
+          $vst = Get-ChildItem -Recurse -Directory build -Filter "StemSep SILVER.vst3" | Select-Object -First 1
+          New-Item -ItemType Directory -Force package | Out-Null
+          Copy-Item -Recurse $vst.FullName "package/StemSep SILVER.vst3"
+          Copy-Item README.md package/LEIA-ME.md
+          Get-ChildItem -Recurse package | Select-Object FullName, Length | Format-Table -AutoSize
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: StemSep-SILVER-VST3-Windows
+          path: package
+          compression-level: 6
