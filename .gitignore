@@ -1,0 +1,10 @@
+build/
+build-*/
+deps/
+model/
+resources/
+package/
+smoke/
+*.onnx
+*.ckpt
+__pycache__/

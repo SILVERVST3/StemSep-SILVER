@@ -80,7 +80,8 @@ target_compile_definitions(StemSepSILVER PUBLIC
     JUCE_USE_MP3AUDIOFORMAT=1
     JUCE_USE_WINDOWS_MEDIA_FORMAT=1
     JUCE_USE_FLAC=1
-    JUCE_USE_OGGVORBIS=1)
+    JUCE_USE_OGGVORBIS=1
+    NOMINMAX)
 
 juce_generate_juce_header(StemSepSILVER)
 
@@ -117,6 +118,7 @@ if(STEMSEP_BUILD_CLI)
     add_executable(stemsep_cli tools/cli/stemsep_cli.cpp ${ENGINE_SOURCES})
     target_include_directories(stemsep_cli PRIVATE
         third_party/pocketfft third_party/r8brain third_party/onnxruntime/include)
+    target_compile_definitions(stemsep_cli PRIVATE NOMINMAX)
     if(MSVC)
         target_compile_options(stemsep_cli PRIVATE /utf-8 /bigobj)
     else()

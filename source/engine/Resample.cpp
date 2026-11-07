@@ -1,3 +1,8 @@
+// r8brain inclui <windows.h>: sem isto as macros min/max quebram std::min/std::max
+#ifndef NOMINMAX
+ #define NOMINMAX
+#endif
+
 #include "Resample.h"
 
 #include <algorithm>
@@ -17,7 +22,7 @@ void resampleChannel (const float* in, int64_t inLength, double srcRate,
 
     if (std::abs (srcRate - dstRate) < 1e-9)
     {
-        const int64_t n = std::min (inLength, outLength);
+        const int64_t n = (std::min) (inLength, outLength);
         std::copy (in, in + n, out);
         std::fill (out + n, out + outLength, 0.0f);
         return;
