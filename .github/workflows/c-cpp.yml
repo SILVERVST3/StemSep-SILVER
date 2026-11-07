@@ -104,6 +104,13 @@ jobs:
           $vst = Get-ChildItem -Recurse -Directory build -Filter "StemSep SILVER.vst3" | Select-Object -First 1
           New-Item -ItemType Directory -Force package | Out-Null
           Copy-Item -Recurse $vst.FullName "package/StemSep SILVER.vst3"
+          # o passo de manifesto do JUCE recria Contents/Resources depois do build: copia o modelo e as DLLs aqui
+          $res = "package/StemSep SILVER.vst3/Contents/Resources"
+          New-Item -ItemType Directory -Force $res | Out-Null
+          Copy-Item resources/* $res -Force
+          foreach ($f in @("StemSep_SCNet_XL.onnx", "onnxruntime.dll", "DirectML.dll")) {
+            if (-not (Test-Path "$res/$f")) { throw "faltando no pacote: $f" }
+          }
           Copy-Item README.md package/LEIA-ME.md
           Get-ChildItem -Recurse package | Select-Object FullName, Length | Format-Table -AutoSize
 
